@@ -13,6 +13,7 @@ namespace IRSequencer.Core
         public bool isWaiting = false; 
         public bool isLocked = false; //sequence is Locked if any of the servos in its commands list are busy
         public string name = "";
+        public Vessel vessel;
 
         public bool IsPaused { 
             get 
@@ -34,12 +35,17 @@ namespace IRSequencer.Core
             name = "New Sequence";
         }
 
-        public Sequence (BasicCommand b) : this()
+        public Sequence (Vessel v) : this()
+        {
+            vessel = v;
+        }
+
+        public Sequence (BasicCommand b, Vessel v) : this(v)
         {
             commands.Add(b);
         }
 
-        public Sequence (Sequence baseSequence) :this()
+        public Sequence (Sequence baseSequence) :this(baseSequence.vessel)
         {
             //commands.AddRange(baseSequence.commands);
             baseSequence.commands.ForEach ((BasicCommand bc) => commands.Add (new BasicCommand (bc)));
@@ -238,7 +244,7 @@ namespace IRSequencer.Core
 
         public string Serialize()
         {
-            var serializedSequence = name.Replace('<',' ').Replace('>',' ').Replace('|',' ') + "|" + isLooped + "<";
+            var serializedSequence = name.Replace('<',' ').Replace('>',' ').Replace('|',' ') + "|" + isLooped + "|" + (vessel == null ? "" : vessel.id.ToString()) + "<";
 
             if (commands == null)
                 return serializedSequence + ">";

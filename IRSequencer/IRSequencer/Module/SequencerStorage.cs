@@ -35,6 +35,8 @@ namespace IRSequencer.Module
                 var message = "";
                 foreach(Sequence s in Sequencer.Instance.sequences)
                 {
+                    if (HighLogic.LoadedSceneIsFlight && s.vessel != this.vessel)
+                        continue;
                     message += s.Serialize () + "$";
                 }
                 serializedSequences = message;
@@ -56,7 +58,7 @@ namespace IRSequencer.Module
             if (Sequencer.Instance.sequences == null)
                 return;
 
-            Sequencer.Instance.sequences.Clear ();
+            //Sequencer.Instance.sequences.Clear ();
 
             var chunks = serializedSequences.Split ('$');
 
@@ -107,7 +109,25 @@ namespace IRSequencer.Module
                         seq.isLooped = false;
                     }
                 }
-                
+
+                if (t.Length > 2)
+                {
+                    try 
+                    {
+                        var tguid = new Guid(t[2]);
+                        seq.vessel = FlightGlobals.Vessels.Find(v => v.id == tguid);
+                    }
+                    catch (Exception e)
+                    {
+                        Logger.Log("TryParseSequence, exception parsing GUID " + t[2] + ", Message " + e.Message, Logger.Level.Debug);
+                    }
+                }
+
+                if (seq.vessel == null && HighLogic.LoadedSceneIsFlight)
+                {
+                    seq.vessel = this.vessel;
+                }
+
                 var seqCommands = s.Substring(s.IndexOf('<') + 1, s.IndexOf('>') - seqName.Length - 1);
 
                 Logger.Log("TryParseSequence, seqCommands=" + seqCommands, Logger.Level.Debug);
@@ -249,15 +269,15 @@ namespace IRSequencer.Module
             
         }
 
-        //returns basic information on kOSProcessor module in Editor
+        //returns basic information on module in Editor
         public override string GetInfo()
         {
-            string moduleInfo = "Provides Storage for Seqences";
+            string moduleInfo = "Provides Storage for Sequences";
 
             return moduleInfo;
         }
 
-        public override void OnStart(StartState state)
+        /*public override void OnStart(StartState state)
         {
             
             if (state == StartState.Editor)
@@ -270,7 +290,8 @@ namespace IRSequencer.Module
                 LoadSequences();
 
             Logger.Log(string.Format("OnStart: {0}", state), Logger.Level.Debug);
-        }
+        }*/
+
     }
 }
 

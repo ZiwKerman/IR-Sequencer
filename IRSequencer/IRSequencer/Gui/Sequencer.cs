@@ -74,6 +74,8 @@ namespace IRSequencer.Gui
         private string lastFocusedControlName = "";
         private string lastFocusedTextFieldValue = "";
 
+        private int loadedVesselCounter = 0;
+
         protected static Rect SequencerWindowPos;
         protected static Rect SequencerEditorWindowPos;
         protected static int SequencerWindowID;
@@ -227,7 +229,7 @@ namespace IRSequencer.Gui
                         return;
                     }
                     appLauncherButton = ApplicationLauncher.Instance.AddModApplication(delegate { GUIEnabled = true; },
-                        delegate { GUIEnabled = false; }, DummyCallback, DummyCallback, DummyCallback, DummyCallback,
+                        delegate { GUIEnabled = false; }, null, null, null, null,
                         ApplicationLauncher.AppScenes.FLIGHT, texture);
 
                 }
@@ -240,9 +242,188 @@ namespace IRSequencer.Gui
             }
         }
 
-        public void DummyCallback()
+        private void ReloadAllSequences()
         {
+            sequences.Clear();
+            openGroupsList = null;
+            guiSequenceEditor = false;
+            availableServoCommands = null;
+            openSequence = null;
+
+            foreach (var v in FlightGlobals.Vessels)
+            {
+                if (!v.loaded)
+                    continue;
+
+                var storage = v.FindPartModulesImplementing<SequencerStorage>();
+                if (storage == null)
+                {
+                    Logger.Log("Could not find SequencerStorage module to load sequences from for vessel " + v.GetName(), Logger.Level.Debug);
+                    continue;
+                }
+                else
+                {
+                    if  (storage.Count > 0)
+                    {
+                        storage[0].LoadSequences();
+                    }
+                    else
+                    {
+                        Logger.Log("Could not find SequencerStorage module to load sequences fromfor vessel " + v.GetName(), Logger.Level.Debug);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        private void OnVesselChange(Vessel v)
+        {
+            //ReloadAllSequences ();
+            //reloading of all sequences on vessel change stops all running sequences
+
+            openGroupsList = null;
+            guiSequenceEditor = false;
+            availableServoCommands = null;
+            openSequence = null;
+
+            Logger.Log("[IRSequencer] OnVesselChange finished, sequences count=" + sequences.Count);
+        }
+
+        private void OnVesselLoaded(Vessel v)
+        {
+            ReloadAllSequences ();
+        }
+
+        private void OnVesselWasModified(Vessel v)
+        {
+            ReloadAllSequences ();
+        }
+
+        private void OnEditorShipModified(ShipConstruct ship)
+        {
+            if(!IRWrapper.APIReady)
+            {
+                IRWrapper.InitWrapper();
+            }
+            guiSequenceEditor = false;
+            availableServoCommands = null;
+            openGroupsList = null;
+            openSequence = null;
             
+            var storagePart = ship.Parts.Find(p => p.FindModuleImplementing<SequencerStorage>() != null);
+            if (storagePart != null)
+            {
+                var storageModule = storagePart.FindModuleImplementing<SequencerStorage>();
+                storageModule.LoadSequences();
+            }
+        }
+
+        private void OnEditorRestart()
+        {
+            GUIEnabled = false;
+            guiSequenceEditor = false;
+            availableServoCommands = null;
+            openGroupsList = null;
+            openSequence = null;
+        }
+
+        private void Awake()
+        {
+            LoadConfigXml();
+
+            GameEvents.onShowUI.Add(OnShowUI);
+            GameEvents.onHideUI.Add(OnHideUI);
+
+            SequencerInstance = this;
+            isReady = true;
+
+            sequences = new List<Sequence>();
+            sequences.Clear();
+
+            GameEvents.onVesselChange.Add(OnVesselChange);
+            GameEvents.onVesselWasModified.Add(OnVesselWasModified);
+            GameEvents.onVesselLoaded.Add (OnVesselLoaded);
+
+            GameEvents.onEditorShipModified.Add(OnEditorShipModified);
+            GameEvents.onEditorRestart.Add(OnEditorRestart);
+
+            GameEvents.onGameSceneLoadRequested.Add(OnGameSceneLoadRequestedForAppLauncher);
+
+            if (ApplicationLauncher.Ready && appLauncherButton == null && ApplicationLauncher.Instance != null)
+            {
+                AddAppLauncherButton();
+            }
+
+            Logger.Log("[Sequencer] Awake successful, Addon: " + AddonName, Logger.Level.Debug);
+        }
+
+
+        void OnGameSceneLoadRequestedForAppLauncher(GameScenes SceneToLoad)
+        {
+            DestroyAppLauncherButton();
+        }
+
+        public void Start()
+        {
+            try
+            {
+                IRWrapper.InitWrapper();
+            }
+            catch (Exception e)
+            {
+                Logger.Log("[Sequencer] Exception while initialising API " + e.Message, Logger.Level.Debug);
+            }
+
+            Logger.Log("[Sequencer] OnStart successful", Logger.Level.Debug);
+        }
+
+        private void OnShowUI()
+        {
+            guiHidden = false;
+        }
+
+        private void OnHideUI()
+        {
+            guiHidden = true;
+        }
+
+        private void DestroyAppLauncherButton()
+        {
+            try
+            {
+                if (appLauncherButton != null && ApplicationLauncher.Instance != null)
+                {
+                    ApplicationLauncher.Instance.RemoveModApplication(appLauncherButton);
+                    appLauncherButton = null;
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Log("[Sequencer] Failed unregistering AppLauncher handlers," + e.Message);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            GameEvents.onShowUI.Remove(OnShowUI);
+            GameEvents.onHideUI.Remove(OnHideUI);
+
+            GameEvents.onVesselChange.Remove(OnVesselChange);
+            GameEvents.onVesselWasModified.Remove(OnVesselWasModified);
+            GameEvents.onVesselLoaded.Remove (OnVesselLoaded);
+
+            GameEvents.onEditorShipModified.Remove(OnEditorShipModified);
+            GameEvents.onEditorRestart.Remove(OnEditorRestart);
+
+            Sequencer.Instance.isReady = false;
+            SaveConfigXml();
+
+            GameEvents.onGameSceneLoadRequested.Remove(OnGameSceneLoadRequestedForAppLauncher);
+            DestroyAppLauncherButton();
+
+            //consider unloading textures too in TextureLoader
+
+            Logger.Log("[Sequencer] Destroy successful", Logger.Level.Debug);
         }
 
         public void Update()
@@ -263,6 +444,15 @@ namespace IRSequencer.Gui
 
         public void FixedUpdate()
         {
+            if(HighLogic.LoadedSceneIsFlight)
+            {
+                if(FlightGlobals.Vessels.Count(v => v.loaded) != loadedVesselCounter)
+                {
+                    ReloadAllSequences ();
+                    loadedVesselCounter = FlightGlobals.Vessels.Count(v => v.loaded);
+                }
+            }
+
             //no need to run for non-robotic crafts or if disabled
             if (!isEnabled || sequences == null)
                 return;
@@ -290,7 +480,7 @@ namespace IRSequencer.Gui
 
                 var activeCommands = sq.commands.FindAll(s => s.isActive);
                 var activeCount = activeCommands.Count;
-                
+
                 foreach (BasicCommand bc in activeCommands)
                 {
                     if (bc.wait)
@@ -300,7 +490,7 @@ namespace IRSequencer.Gui
                             //we should wait until ActionGroup is executed
                             if(HighLogic.LoadedSceneIsFlight)
                             {
-                                
+
                                 if (FlightGlobals.ActiveVessel != null)
                                 {
                                     if(FlightGlobals.ActiveVessel.ActionGroups[bc.ag])
@@ -406,7 +596,7 @@ namespace IRSequencer.Gui
                                         if (sq.commands[sq.lastCommandIndex].gotoCounter > 0) sq.commands[sq.lastCommandIndex].gotoCounter--;
 
                                         sq.commands.GetRange(sq.commands[sq.lastCommandIndex].gotoIndex, sq.commands.Count - sq.commands[sq.lastCommandIndex].gotoIndex)
-                                                   .ForEach(delegate(BasicCommand c) { c.isFinished = false; c.isActive = false; });
+                                            .ForEach(delegate(BasicCommand c) { c.isFinished = false; c.isActive = false; });
                                         sq.Resume(sq.commands[sq.lastCommandIndex].gotoIndex);
                                     }
                                 }
@@ -445,174 +635,6 @@ namespace IRSequencer.Gui
             }
         }
 
-        private void OnVesselChange(Vessel v)
-        {
-            sequences.Clear();
-            openGroupsList = null;
-            guiSequenceEditor = false;
-            availableServoCommands = null;
-            openSequence = null;
-
-            //find module SequencerStorage and force loading of sequences
-            var storage = v.FindPartModulesImplementing<SequencerStorage>();
-            if (storage == null)
-            {
-                Logger.Log("Could not find SequencerStorage module to load sequences from", Logger.Level.Debug);
-                return;
-            }
-            else
-            {
-                try
-                {
-                    if  (v == FlightGlobals.ActiveVessel && storage.Count > 0)
-                    {
-                        storage[0].LoadSequences();
-                    }
-                    else
-                    {
-                        Logger.Log("Could not find SequencerStorage module to load sequences from", Logger.Level.Debug);
-                        return;
-                    }
-                        
-                }
-                catch (Exception e)
-                {
-                    Logger.Log("[IRSequencer] Exception in OnVesselChange: " + e.Message);
-                }
-            }
-
-            Logger.Log("[IRSequencer] OnVesselChange finished, sequences count=" + sequences.Count);
-        }
-
-        private void OnVesselWasModified(Vessel v)
-        {
-            if (v == FlightGlobals.ActiveVessel)
-            {
-                OnVesselChange(v);
-            }
-        }
-
-        private void OnEditorShipModified(ShipConstruct ship)
-        {
-            if(!IRWrapper.APIReady)
-            {
-                IRWrapper.InitWrapper();
-            }
-            guiSequenceEditor = false;
-            availableServoCommands = null;
-            openGroupsList = null;
-            openSequence = null;
-            
-            var storagePart = ship.Parts.Find(p => p.FindModuleImplementing<SequencerStorage>() != null);
-            if (storagePart != null)
-            {
-                var storageModule = storagePart.FindModuleImplementing<SequencerStorage>();
-                storageModule.LoadSequences();
-            }
-        }
-
-        private void Awake()
-        {
-            LoadConfigXml();
-
-            GameEvents.onShowUI.Add(OnShowUI);
-            GameEvents.onHideUI.Add(OnHideUI);
-
-            SequencerInstance = this;
-            isReady = true;
-
-            sequences = new List<Sequence>();
-            sequences.Clear();
-
-            GameEvents.onVesselChange.Add(OnVesselChange);
-            GameEvents.onVesselWasModified.Add(OnVesselWasModified);
-            GameEvents.onEditorShipModified.Add(OnEditorShipModified);
-            GameEvents.onEditorRestart.Add(OnEditorRestart);
-
-            GameEvents.onGameSceneLoadRequested.Add(OnGameSceneLoadRequestedForAppLauncher);
-
-            if (ApplicationLauncher.Ready && appLauncherButton == null && ApplicationLauncher.Instance != null)
-            {
-                AddAppLauncherButton();
-            }
-
-            Logger.Log("[Sequencer] Awake successful, Addon: " + AddonName, Logger.Level.Debug);
-        }
-
-        private void OnEditorRestart()
-        {
-            GUIEnabled = false;
-            guiSequenceEditor = false;
-            availableServoCommands = null;
-            openGroupsList = null;
-            openSequence = null;
-        }
-
-        void OnGameSceneLoadRequestedForAppLauncher(GameScenes SceneToLoad)
-        {
-            DestroyAppLauncherButton();
-        }
-
-        public void Start()
-        {
-            try
-            {
-                IRWrapper.InitWrapper();
-            }
-            catch (Exception e)
-            {
-                Logger.Log("[Sequencer] Exception while initialising API " + e.Message, Logger.Level.Debug);
-            }
-
-            Logger.Log("[Sequencer] OnStart successful", Logger.Level.Debug);
-        }
-
-        private void OnShowUI()
-        {
-            guiHidden = false;
-        }
-
-        private void OnHideUI()
-        {
-            guiHidden = true;
-        }
-
-        private void DestroyAppLauncherButton()
-        {
-            try
-            {
-                if (appLauncherButton != null && ApplicationLauncher.Instance != null)
-                {
-                    ApplicationLauncher.Instance.RemoveModApplication(appLauncherButton);
-                    appLauncherButton = null;
-                }
-            }
-            catch (Exception e)
-            {
-                Logger.Log("[Sequencer] Failed unregistering AppLauncher handlers," + e.Message);
-            }
-        }
-
-        private void OnDestroy()
-        {
-            GameEvents.onShowUI.Remove(OnShowUI);
-            GameEvents.onHideUI.Remove(OnHideUI);
-
-            GameEvents.onVesselChange.Remove(OnVesselChange);
-            GameEvents.onVesselWasModified.Remove(OnVesselWasModified);
-            GameEvents.onEditorShipModified.Remove(OnEditorShipModified);
-            GameEvents.onEditorRestart.Remove(OnEditorRestart);
-
-            Sequencer.Instance.isReady = false;
-            SaveConfigXml();
-
-            GameEvents.onGameSceneLoadRequested.Remove(OnGameSceneLoadRequestedForAppLauncher);
-            DestroyAppLauncherButton();
-
-            //consider unloading textures too in TextureLoader
-
-            Logger.Log("[Sequencer] Destroy successful", Logger.Level.Debug);
-        }
 
         /// <summary>
         /// Has to be called after any GUI element with tooltips.
@@ -664,17 +686,42 @@ namespace IRSequencer.Gui
 
             GUILayout.BeginVertical();
 
-            /*GUILayout.BeginHorizontal();
-
-            GUILayout.Label("Sequence Name", GUILayout.ExpandWidth(true), GUILayout.Height(22));
-            GUILayout.Label("Controls", GUILayout.Width(150), GUILayout.Height(22));
-
-            GUILayout.EndHorizontal();
-            */
+            //assumes sequences are sorted by vessel (due to the way they are parsed)
             for (int i = 0; i < sequences.Count; i++)
             {
                 //list through all sequences
                 var sq = sequences[i];
+
+                if (HighLogic.LoadedSceneIsFlight && i==0 && sq.vessel != null)
+                {
+                    GUILayout.BeginHorizontal();
+                    nameStyle.fontStyle = FontStyle.Bold;
+                    GUILayout.Label(sq.vessel.GetName() + (sq.vessel == FlightGlobals.ActiveVessel ? " (Active)" : ""), nameStyle, GUILayout.ExpandWidth(true), GUILayout.Height(22));
+                    nameStyle.fontStyle = FontStyle.Normal;
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal(GUILayout.Height(5));
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Space (10);
+                    GUILayout.BeginVertical();
+
+                }
+                else if (HighLogic.LoadedSceneIsFlight && sq.vessel != sequences[i-1].vessel)
+                {
+                    GUILayout.EndVertical();
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                    nameStyle.fontStyle = FontStyle.Bold;
+                    GUILayout.Label(sq.vessel.GetName() + (sq.vessel == FlightGlobals.ActiveVessel ? " (Active)" : ""), nameStyle, GUILayout.ExpandWidth(true), GUILayout.Height(22));
+                    nameStyle.fontStyle = FontStyle.Normal;
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal(GUILayout.Height(5));
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Space (10);
+                    GUILayout.BeginVertical();
+                }
+
                 GUILayout.BeginHorizontal();
 
                 string sequenceStatus = (sq.isActive) ? "<color=lime>■</color>" : sq.isFinished ? "<color=green>■</color>" : "<color=silver>■</color>";
@@ -762,13 +809,22 @@ namespace IRSequencer.Gui
                 SetTooltipText ();
                 GUI.color = opaqueColor;
                 GUILayout.EndHorizontal();
+
+                if (HighLogic.LoadedSceneIsFlight && i==sequences.Count - 1 && sq.vessel != null)
+                {
+                    GUILayout.EndVertical();
+                    GUILayout.EndHorizontal();
+                }
             }
             GUILayout.BeginHorizontal();
             GUI.color = solidColor;
 
             if(GUILayout.Button("Add new", buttonStyle, GUILayout.Height(22)))
             {
-                sequences.Add(new Sequence());
+                if (HighLogic.LoadedSceneIsFlight)
+                    sequences.Add (new Sequence (FlightGlobals.ActiveVessel));
+                else
+                    sequences.Add(new Sequence());
             }
             GUI.color = opaqueColor;
             GUILayout.EndHorizontal();
@@ -881,6 +937,9 @@ namespace IRSequencer.Gui
                 for (int i = 0; i < IRWrapper.IRController.ServoGroups.Count; i++) 
                 {
                     IRWrapper.IControlGroup g = IRWrapper.IRController.ServoGroups [i];
+
+                    if (HighLogic.LoadedSceneIsFlight && g.Vessel != FlightGlobals.ActiveVessel)
+                        continue;
                    
                     if (g.Servos.Any ()) 
                     {
@@ -951,6 +1010,9 @@ namespace IRSequencer.Gui
                                 string focusedControlName = GUI.GetNameOfFocusedControl ();
                                 string thisControlName = "SequencerPosition " + servo.UID;
 
+                                //if (g.Vessel != null)
+                                //    thisControlName += " V.id " + g.Vessel.id;
+
                                 tmpString = DrawTextField (thisControlName, avCommand.position, "{0:#0.0#}", 
                                     textFieldStyle, GUILayout.Width (40), GUILayout.Height (22));
 
@@ -966,6 +1028,9 @@ namespace IRSequencer.Gui
                                 GUILayout.Label ("@", nameStyle, GUILayout.Height (22));
 
                                 thisControlName = "SequencerSpeed " + servo.UID;
+
+                                //if (g.Vessel != null)
+                                //    thisControlName += " V.id " + g.Vessel.id;
 
                                 tmpString = DrawTextField (thisControlName, avCommand.speedMultiplier, "{0:#0.0#}", 
                                     textFieldStyle, GUILayout.Width (30), GUILayout.Height (22));
